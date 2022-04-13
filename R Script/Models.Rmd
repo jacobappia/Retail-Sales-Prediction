@@ -1,0 +1,348 @@
+---
+title: "Models"
+author: "Jacob Appia"
+date: "12/04/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the necessary package
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+## Loading the data necessary to performance analysis
+```{r}
+#Training data set
+sales=read.csv('../Data/sales_train.csv')
+shops=read.csv('../Data/shops.csv')#Shops 
+prediction.set=read.csv('../Data/test.csv')#Test
+cats=read.csv('../Data/categories.csv')
+items=read.csv('../Data/items.csv')
+
+```
+
+
+```{r}
+##Setting all negative prices and negative quantity sold to zero
+attach(sales)
+sales$item_price=ifelse(item_price<0,0,item_price);sum(sales$item_price<0)
+sales$item_cnt_day=ifelse(item_cnt_day<0,0,item_cnt_day);sum(sales$item_cnt_day<0)
+detach(sales)
+```
+
+
+```{r}
+##Merging shops which look alike
+sales$shop_id=ifelse(sales$shop_id==0,57,sales$shop_id)
+sales$shop_id=ifelse(sales$shop_id==1,58,sales$shop_id)
+sales$shop_id=ifelse(sales$shop_id==10,11,sales$shop_id)
+unique(sales$shop_id)
+
+prediction.set$shop_id=ifelse(prediction.set$shop_id==0,57,prediction.set$shop_id)
+prediction.set$shop_id=ifelse(prediction.set$shop_id==1,58,prediction.set$shop_id)
+prediction.set$shop_id=ifelse(prediction.set$shop_id==10,11,prediction.set$shop_id)
+unique(prediction.set$shop_id)
+```
+
+
+```{r}
+##Loading shops data into R after formatting in Excel
+library(readxl)
+Shops.data=read_excel('../Data/Cleaned data/Post_editted_Shop_data.xlsx')
+
+##Removing NA values and formatting shop_Type into shops.csv data
+Shops.data[is.na(Shops.data)]='change'
+unique(Shops.data$shop_type)
+shops.cat=list()
+m=1
+for (var in Shops.data$shop_type){
+  shops.cat[m]= ifelse(length(Shops.data$shop_type[Shops.data$shop_type==var])<5,'Other', var)
+  m=m+1
+}
+
+Shops.data$shop_type=array(unlist(shops.cat))
+
+##Our new shops data is called shops.data
+head(Shops.data)
+```
+
+
+```{r}
+##Loading category data from excel after formatting in Excel
+category=read_excel('../Data/Cleaned data/Post_editted_category_data.xlsx')
+
+####Removing NA values and formatting Type in category into categories data
+category[is.na(category)]='Others'
+shops.cat1=list()
+m=1
+for (var in category$Type){
+  shops.cat1[m]= ifelse(length(category$Type[category$Type==var])<5, 'Other', var)
+  m=m+1
+}
+
+category$Type=array(unlist(shops.cat1))
+
+##Our new category data is called category
+head(category)
+```
+
+```{r}
+##summing the daily sales values to monthly sales values
+sales=sales%>%group_by(date_block_num,item_price, shop_id,item_id)%>%
+  summarise_at(vars(item_cnt_day),sum)%>%
+  mutate(item_cnt_month=item_cnt_day,revenue=item_price*item_cnt_day)%>%
+  select(date_block_num,item_price,shop_id,item_id,item_cnt_month,revenue)
+##creating dataset called train to use for merging with prediction.set for IMPROVED XGBOOST model
+
+
+##Adding shops, items and categories data onto sales data
+sales=merge(sales,items)##adding category ID to sales
+sales=sales[,-ncol(sales)]
+sales=merge(sales,category)##adding item type and subtype to data
+sales=merge(sales,Shops.data)
+sales=sales[,-ncol(sales)]
+Train=sales
+
+dim(sales)
+##Formatting the prediction set
+prediction.set$date_block_num=rep(34,nrow(prediction.set))
+
+
+##Adding shops, items and categories data onto prediction set
+
+prediction.set=merge(prediction.set,items  )##adding category ID to prediction set
+prediction.set=prediction.set[,-ncol(prediction.set)]
+prediction.set=merge(prediction.set,category  )##adding item type and subtype to data
+prediction.set=merge(prediction.set,Shops.data  )
+prediction.set=prediction.set%>%select(-ID)
+
+```
+
+
+```{r}
+##Defining a function to add lag features
+library(data.table)
+
+Add_lags= function(df,lags,cols){
+  for (col in cols){
+    tmp=df[,c('date_block_num','shop_id','item_id',col)]
+    for (j in lags){
+      shifted= copy(tmp)
+      names(shifted)= c('date_block_num','shop_id','item_id',paste(col,'_lag_',j))
+      shifted$date_block_num=shifted$date_block_num+j
+      return(shifted)
+  }
+  }
+}
+
+##Merging the prediction and Training data set
+Full_dat=merge(Train,prediction.set,all = T)
+
+dim(Full_dat)
+
+##Creating the 3 lagged values for sales
+Shifted1=Add_lags(df=sales,lags = c(1),c('item_cnt_month'))
+dim(Shifted1)
+Shifted2=Add_lags(df=sales,lags = c(2),c('item_cnt_month'))
+
+Shifted3=Add_lags(df=sales,lags = c(3),c('item_cnt_month'))
+
+sales1=merge(sales,Shifted1)
+sales2=merge(unique(sales1),Shifted2)
+sales3=merge(unique(sales2),Shifted3)
+
+##Creating the 3 lagged values for the full data
+Shifted11=Add_lags(df=Full_dat,lags = c(1),c('item_cnt_month'))
+dim(Shifted11)
+Shifted21=Add_lags(df=Full_dat,lags = c(2),c('item_cnt_month'))
+Shifted31=Add_lags(df=Full_dat,lags = c(3),c('item_cnt_month'))
+
+Full_dat1=merge(Full_dat,Shifted11)
+Full_dat2=merge(unique(Full_dat1),Shifted21)
+Full_dat3=merge(unique(Full_dat2),Shifted31)
+
+Full_dat3=unique(Full_dat3)
+dim(Full_dat3)
+Fulldat4=Full_dat3
+
+```
+
+
+```{r}
+##Creating features to add to sales
+Ave_sales_per_mth=sales%>%group_by(shop_id, date_block_num)%>%
+  summarise_at(vars(item_cnt_month),mean)%>%
+  mutate(ave_item_cnt_mth=item_cnt_month)%>%
+  select(date_block_num,shop_id,ave_item_cnt_mth)##average sales per month per shop
+
+Ave_sales_per_type=sales%>%group_by(Type, date_block_num)%>%
+  summarise_at(vars(item_cnt_month),mean)%>%
+  mutate(ave_item_cnt_type=item_cnt_month)%>%
+  select(date_block_num,Type,ave_item_cnt_type)##average sales per month per type
+
+##Creating features to add to Full data
+Ave_sales_per_mth=Fulldat4%>%group_by(shop_id, date_block_num)%>%
+  summarise_at(vars(item_cnt_month),mean)%>%
+  mutate(ave_item_cnt_mth=item_cnt_month)%>%
+  select(date_block_num,shop_id,ave_item_cnt_mth)##average sales per month per shop
+
+Ave_sales_per_type=Fulldat4%>%group_by(Type, date_block_num)%>%
+  summarise_at(vars(item_cnt_month),mean)%>%
+  mutate(ave_item_cnt_type=item_cnt_month)%>%
+  select(date_block_num,Type,ave_item_cnt_type)##average sales per month per type
+
+##merging created features with sales data
+sales3=merge(sales3,Ave_sales_per_mth)
+sales3=merge(sales3,Ave_sales_per_type)
+
+##merging created features with Full data
+Fulldat4=merge(Fulldat4,Ave_sales_per_mth)
+Fulldat4=merge(Fulldat4,Ave_sales_per_type)
+
+##Making sure sales values are all unique and sorting data in ascending order of date block
+sales3=sales3%>%arrange(date_block_num)
+sales3=unique(sales3)
+
+str(sales3)
+
+sales4=sales3##creating new variable to ensure safety of previous steps
+
+##Making sure Fulldata values are all unique and sorting data in ascending order of date block
+Fulldat4=Fulldat4%>%arrange(desc(date_block_num))
+Fulldat4=unique(Fulldat4)
+```
+
+
+```{r}
+##Formatting the data to use in  XGBoost
+
+cols=c('Type','Subtype','shop_city','shop_type')
+
+sales4[cols]=lapply(sales4[cols],as.numeric)
+str(sales4)
+
+Training_data = subset(sales4,date_block_num<33)
+
+X_Train=Training_data[,-7]
+Y_Train=Training_data[,7]
+X_Train=as.matrix(X_Train)
+
+Testing_data=subset(sales4,date_block_num==33)
+
+X_Test=Testing_data[,-7]
+Y_Test=Testing_data[,7]
+X_Test=as.matrix(X_Test)
+
+##Fitting the XGBoost Model
+library(xgboost)
+
+params=list(set.seed=409,eval_metric='rmse')
+xg1=xgboost(data= X_Train,label = Y_Train,params=params,nrounds = 100,verbose = 1)
+pred1=predict(xg1,newdata = X_Test)
+
+MSE1=mean((pred1-Y_Test)^2)
+
+##Checking important variables
+importance_matrix <- xgb.importance(feature_names=colnames(X_Train), model = xg1)
+xgb.plot.importance(importance_matrix = importance_matrix,rel_to_first = 1, xlab = "Relative importance")
+
+```
+
+
+```{r}
+####Improving the XGBoost Model
+##Formatting the data to use in XGBoost
+Fulldata=Fulldat4
+str(Fulldata)
+
+Fulldata=Fulldata%>%select(-shop_name)
+head(Fulldata)
+
+cols=c('Subtype','shop_city')
+Fulldata[cols]=lapply(Fulldata[cols],as.factor)
+
+cols1=c('Subtype','shop_city')
+Fulldata[cols1]=lapply(Fulldata[cols1],as.numeric)
+str(Fulldata)
+
+library(fastDummies)
+Fulldata1=dummy_cols(Fulldata,remove_first_dummy = T)
+str(Fulldata1)
+
+Fulldata2=Fulldata1%>%select(-Type,-shop_type)
+Fulldata2=as.data.frame(Fulldata2)
+str(Fulldata2)
+
+
+Training_data = subset(Fulldata2,date_block_num<33)
+
+X_Train=Training_data%>%select(-item_cnt_month)
+Y_Train=Training_data%>%select(item_cnt_month)
+
+X_Train=as.matrix(X_Train)
+Y_Train=as.matrix(Y_Train)
+
+Testing_data=subset(Fulldata2,date_block_num==33)
+
+X_Test=Testing_data%>%select(-item_cnt_month)
+Y_Test=Testing_data%>%select(item_cnt_month)
+
+X_Test=as.matrix(X_Test)
+Y_Test=as.matrix(Y_Test)
+
+Prediction.data=subset(Fulldata2,date_block_num==34)
+
+X_Prediction.data=Prediction.data%>%select(-item_cnt_month)
+
+Prediction.data[is.na(Prediction.data)]=0
+X_Prediction.data=as.matrix(X_Prediction.data)
+
+dtrain <- xgb.DMatrix(data = X_Train, label = Y_Train) 
+dvalid <- xgb.DMatrix(data = X_Test, label = Y_Test)
+
+##Fitting the XGBoost Model
+params=list(set.seed=409,eval_metric='rmse',objective='reg:squarederror' )
+xg1=xgb.train(data=dtrain,params=params,nrounds = 100,verbose = 1,early_stopping_rounds = 50
+            , watchlist=list(train=dtrain, val=dvalid))
+
+pred_xgb=predict(xg1, newdata = X_Prediction.data)
+
+MSE1=mean((pred_xgb-Y_Test)^2)
+
+##Checking important variables
+importance_matrix <- xgb.importance(feature_names=colnames(X_Train), model = xg1)
+xgb.plot.importance(importance_matrix = importance_matrix, rel_to_first = 1, xlab = "Relative importance")
+
+X_Pred=subset(Fulldat4,date_block_num==34)
+pred_xgb=round(pred_xgb)
+
+Finalsubmission= cbind(X_Pred,pred_xgb)
+Finalsubmission= Finalsubmission%>%select(shop_id,item_id,pred_xgb,date_block_num)
+View(Finalsubmission)
+
+#Putting submission to Excel
+write.xlsx(Finalsubmission,'../Output/XGBoostresult.xlsx')
+```
+
+
+```{r}
+
+##Fitting a linear model
+lm1=lm(item_cnt_month~.,data = Training_data)
+
+pred_lm=predict(lm1, newdata = X_Prediction.data)
+pred_lm=round(pred_lm)
+
+summary(lm1)
+Finalsubmission2=cbind(Prediction.data[,c('item_id','shop_id')],pred_lm)
+Finalsubmission2
+
+write.xlsx(Finalsubmission2,'../Output/Linearmodelresult.xlsx')
+
+```
+

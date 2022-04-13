@@ -1,0 +1,369 @@
+---
+title: "Exploratory Data Analysis (EDA)"
+author: "Jacob Appia"
+date: "12/04/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the necessary package
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+
+## Loading the data necessary to performance analysis
+```{r}
+#Training data set
+sales=read.csv('../Data/sales_train.csv')
+shops=read.csv('../Data/shops.csv')#Shops 
+Prediction.set=read.csv('../Data/test.csv')#Test
+cats=read.csv('../Data/categories.csv')
+items=read.csv('../Data/items.csv')
+
+```
+
+## A preview of the data
+```{r}
+head(sales)#sales
+head(Prediction.set)#Prediction set)
+head(shops)#shops
+head(cats)#categories
+head(items)#items
+```
+
+## Merging different tables and formatting data structure
+```{r}
+##Merging the sales and categories data 
+sales= merge(sales, items[,c("item_id", "category_id")], by = "item_id", all.x = T)
+sales= merge(sales,items,all.x = T)
+
+##Formatting data
+sales$date= as.Date(sales$date,'%d.%m.%Y')
+
+sales$year=year(sales$date)
+sales$year=as.factor(sales$year)##obtaining years data 
+
+sales$month = month(sales$date)
+sales$month = as.factor(sales$month)##obtaining month 
+
+sales$day = day(sales$date)
+sales$day = as.factor(sales$day)##obtaining day
+
+sales$weekdays =  weekdays(sales$date)
+sales$weekdays = as.factor(sales$weekdays)##obtaining weekday
+
+sales$category_id =  as.factor(sales$category_id)
+```
+
+## Exploring data for insight
+```{r}
+## Saving ggplot theme to avoid repetition
+dd_theme <- theme(
+  # get rid of panel grids
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_line(colour = "gray",linetype = "dotted"),
+  # Change plot and panel background
+  plot.background=element_rect(fill = "black"),
+  panel.background = element_rect(fill = 'black'),
+  # Change legend 
+  # legend.position = c(0.6, 0.07),
+  # legend.direction = "horizontal",
+  legend.background = element_rect(fill = "black", color = NA),
+  legend.key = element_rect(color = "gray", fill = "black"),
+  legend.title = element_text(color = "white"),
+  legend.text = element_text(color = "white"),
+  plot.title = element_text(color = "white", hjust = 0.5, face = "bold"),
+  # axis ticks to bold black
+  axis.text=element_text(colour = "yellow",face = "bold"),
+  axis.title.x = element_text(color = "white"),
+  axis.title.y = element_text(color = "white")
+)
+```
+
+```{r}
+## Aggregating sales by shops
+sales_shopwise = sales %>%
+  select(shop_id, item_cnt_day) %>%
+  group_by(shop_id) %>%
+  summarise(item_cnt_day =  sum(item_cnt_day, na.rm = T))
+
+ggplot(data =  sales_shopwise, 
+       mapping = aes(x = reorder(shop_id, item_cnt_day), 
+                     y = item_cnt_day, 
+                     fill = factor(shop_id))) +
+  geom_histogram(stat = "identity", color = "yellow") +
+  # coord_flip() +
+  xlab("Shop ID") + ylab("Sales Count")+
+  # geom_label(stat = "identity",position = position_dodge(width = 1),hjust = "center", aes(label = item_cnt_day)) +
+  ggtitle(label = "Shop wise sales") + dd_theme
+```
+
+
+```{r}
+## Sale Item Category wise
+sales_categorywise = sales %>%
+  select(category_id, item_cnt_day) %>%
+  group_by(category_id) %>%
+  summarise(item_cnt_day =  sum(item_cnt_day, na.rm = T))
+
+ggplot(data =  sales_categorywise, 
+       mapping = aes(x = reorder(category_id,item_cnt_day), 
+                     y = item_cnt_day,
+                     fill = factor(category_id))) +
+  geom_histogram(stat = "identity", color = "yellow") +
+  xlab("Item Category") + ylab("Sales Count") +
+  ggtitle("Sale Item Category wise")+ dd_theme
+```
+
+
+```{r}
+## Most Items in Shops
+items_in_shop = sales%>%
+  select(shop_id, item_id) %>%
+  group_by(shop_id) %>%
+  summarise(item_id = n_distinct(item_id))
+
+ggplot(data = items_in_shop,
+       mapping = aes(x = reorder(shop_id,item_id),
+                     y = item_id,
+                     fill = factor(shop_id)))+
+  geom_histogram(stat = "identity", color = "yellow") +
+  xlab(" Shop ID")+ ylab(" Items in shop")+
+  ggtitle("Most Items in Shops") +
+  coord_flip()+ dd_theme
+```
+
+
+```{r}
+## Most Items per Category
+items_in_category = sales %>%
+  select(category_id, item_id) %>%
+  group_by(category_id) %>%
+  summarise(item_id =  n_distinct(item_id))
+
+ggplot(data = items_in_category,
+       mapping = aes(x = reorder(category_id,item_id),
+                     y = item_id,
+                     fill = factor(category_id)))+
+  geom_histogram(stat = "identity", color = "yellow") +
+  xlab(" Category ID")+ ylab(" Items in Category")+
+  ggtitle("Most Items per Category") +
+  coord_flip()+ dd_theme
+```
+
+
+```{r}
+## Most Popular Item per shop
+popular_items_in_shop  =  sales%>%
+  group_by(shop_id, item_id) %>%
+  summarise(sold_item_count = sum(item_cnt_day)) %>%
+  filter(sold_item_count == max(sold_item_count)) %>%
+  arrange(sold_item_count)
+
+
+ggplot(data = popular_items_in_shop,
+       mapping = aes(x = reorder(shop_id, sold_item_count),
+                     y = sold_item_count,
+                     fill = factor(item_id))) +
+  geom_histogram(stat = "identity", color = "yellow") +
+  xlab("") + ylab("Sales Count") +
+  ggtitle("Most Popular Item per shop") +
+  coord_flip()+ dd_theme
+```
+
+
+```{r}
+## Most Item category per shop
+shop_with_most_category = sales%>%
+  select(shop_id, category_id) %>%
+  group_by(shop_id) %>%
+  summarise(category_count =  n_distinct(category_id)) %>%
+  arrange(desc(category_count))
+
+ggplot(data = shop_with_most_category,
+       mapping = aes(x = reorder(shop_id, category_count),
+                     y = category_count,
+                     fill = factor(shop_id))) +
+  geom_histogram(stat = "identity", color = "yellow") +
+  xlab("Shop ID") + ylab("Item Category Count") +
+  ggtitle("Most Item category per shop") +
+  coord_flip()+ dd_theme
+```
+
+
+```{r}
+## Most popular item category per shop
+popular_category =  sales %>%
+  group_by(shop_id, category_id) %>%
+  summarise(category_count = sum(item_cnt_day)) %>%
+  filter(category_count == max(category_count)) %>%
+  arrange(desc(category_count))
+
+ggplot(data =  popular_category, 
+       mapping = aes(x = reorder(shop_id, category_count),
+                     y =  category_count,
+                     fill = factor(category_id))) +
+  geom_histogram(stat ="identity", color = "yellow") +
+  xlab("Shop ID")+ ylab("Category per shop") + 
+  ggtitle("Most popular item category per shop")+
+  coord_flip()+ dd_theme
+```
+
+
+```{r}
+## Total Gross per Item category
+most_grossing_category = sales %>%
+  group_by(category_id) %>%
+  summarise(total_gross = sum(item_cnt_day * item_price)) %>%
+  arrange(desc(total_gross))
+
+ggplot(most_grossing_category, 
+       aes(x = reorder(category_id, total_gross),
+           y = total_gross,
+           fill = factor(category_id))) +
+  geom_histogram(stat = "identity", color = "yellow") +
+  xlab("Category ID") + ylab("Total Gross")+
+  ggtitle("Total Gross per Item category") +
+  coord_flip()+ dd_theme
+```
+
+
+```{r}
+# item categories available in each shop 
+item_category_in_shops = sales%>%
+  group_by(shop_id) %>%
+  summarise(item_category =  paste(sort(unique(category_id)), collapse = ", ")) 
+
+head(item_category_in_shops)
+
+# which item gets sold the most under which category 
+most_sold_item_per_category = sales%>%
+  group_by(category_id, item_id) %>%
+  summarise(total_sales = sum(item_price * item_cnt_day)) %>%
+  filter(total_sales == max(total_sales)) %>%
+  arrange(desc(total_sales))
+
+
+ggplot(most_sold_item_per_category,
+       aes(x = reorder(category_id, total_sales), 
+           y = total_sales,
+           fill = factor(item_id))) +
+  geom_histogram(stat = "identity", color = "yellow") +
+  labs(title = "Items sold per category",x = "Category ID", y = "Sales", fill = "Item ID") +
+  coord_flip()+ dd_theme
+```
+
+
+```{r}
+# day and month wise total sales 
+month_daywise_total_sales =  sales %>%
+  group_by(month, day) %>%
+  summarise(total_sales =  sum(item_price * item_cnt_day))
+
+ggplot(month_daywise_total_sales, 
+       aes(x = day, 
+           y = total_sales, 
+           group =  month, 
+           color =  factor(month))) +
+  geom_line() + 
+  geom_point() +
+  labs(title = "Total Sales month-day wise", x = "Days", y = "Total sales", fill = "Months") +
+  dd_theme
+
+
+ggplot(month_daywise_total_sales, 
+       aes(x = day, 
+           y = total_sales, 
+           fill =  factor(day))) +
+  geom_histogram(stat = "identity", color = "yellow") +
+  labs(title = "Total Sales month-day wise", x = "Days", y = "Total sales", fill = "Days") +
+  facet_wrap(~month, ncol = 2)+ dd_theme
+```
+
+
+```{r}
+# year wise total sales
+yearly_sales = sales %>%
+  group_by(year) %>%
+  summarise(yearly_sale = sum(item_price * item_cnt_day))
+
+ggplot(yearly_sales, aes(x =  year, y = yearly_sale, fill =  factor(year)))+
+  geom_histogram(stat = "identity", color = "yellow")+
+  labs(title = "Yearly Sales", x = "Year", y = "Total Sale", fill = "Year")+
+  geom_label(stat = "identity",position = position_dodge(width = 1),hjust = "center", aes(label = yearly_sale)) +
+  dd_theme
+```
+
+
+```{r}
+# year and month wise sales aggregate
+ym_sales = sales %>%
+  group_by(year, month) %>%
+  summarise(ym_sale = sum(item_price*item_cnt_day)) %>%
+  arrange(year)
+
+ym_sales$ym_sale = round(ym_sales$ym_sale, 2)
+ggplot(ym_sales, aes(x =  month, y = ym_sale, fill =  factor(year)))+
+  geom_histogram(stat = "identity", color = "yellow") +
+  labs(title = "Yearly-Monthly Sales", x = "Months", y =  "Total sales", fill = "Year")+
+  geom_label(stat = "identity",position = position_stack(),hjust = "center",vjust = 0.5, aes(label = ym_sale))+
+  dd_theme
+
+
+ggplot(ym_sales, aes(x =  month, y = ym_sale, fill =  factor(year)))+
+  geom_histogram(stat = "identity", position = "dodge", color = "yellow") +
+  labs(title = "Yearly-Monthly sales", x = "Months", y =  "Total sales", fill = "Year")+
+  dd_theme
+```
+
+
+```{r}
+# Daily sales aggregate
+daily_sale = sales %>%
+  group_by(date) %>%
+  summarise(items_sold =  sum(item_cnt_day))
+
+ggplot(daily_sale, aes(x =  date, y = items_sold, color =  items_sold)) +
+  geom_line() +
+  geom_point()+
+  labs(title = "Daily Item sold", x =  "Date", y = "Items sold")+
+  dd_theme
+```
+
+
+```{r}
+# items sold on weekdays 
+weekdays_item_sold = sales %>%
+  group_by(weekdays) %>%
+  summarise(item_sold = sum(item_cnt_day)) %>%
+  arrange(desc(item_sold))
+
+ggplot(weekdays_item_sold, aes(x =reorder(weekdays, item_sold), y =  item_sold, fill = factor(weekdays)))+
+  geom_bar(stat = "identity", color = "yellow") +
+  labs(title = "Items sold on weekdays", x = "Week Days", y =  "Items sold", fill = "Week Days") +
+  geom_label(stat = "identity",position = position_dodge(width = 1),hjust = "center", aes(label = item_sold)) +
+  coord_flip()+ dd_theme
+```
+
+
+```{r}
+# sale revenue on weekdays
+weekdays_sales = sales%>%
+  group_by(weekdays) %>%
+  summarise(total_sale = sum(item_cnt_day * item_price)) %>%
+  arrange(desc(total_sale))
+weekdays_sales$total_sale = round(weekdays_sales$total_sale, 2)
+
+ggplot(weekdays_sales, aes(x =reorder(weekdays, total_sale), y =  total_sale, fill = factor(weekdays)))+
+  geom_bar(stat = "identity", color ="yellow") +
+  labs(title = "Sales on weekdays", x = "Week Days", y =  "Items sold", fill = "Week Days") +
+  coord_flip()+
+  geom_label(stat = "identity",position = position_dodge(width = 1),hjust = "center", aes(label = total_sale)) +
+  dd_theme
+```
+
