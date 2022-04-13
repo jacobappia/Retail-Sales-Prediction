@@ -5,6 +5,7 @@
 .Rproj.user
 .RData
 .Rhistory
+Data
 
 # Ignore files related to API keys
 .env
