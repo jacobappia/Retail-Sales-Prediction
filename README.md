@@ -20,14 +20,14 @@ We train the models and evaluate the models performance based on the rmse.
 • Add lag features:
   We decide to use lagged sales figures from 3 prior months to help predict sales in the current month.
   
-• Preparing our training and testing set
+• Preparing our training and testing set:
   We use date block 0-32 (Jan 2013- October 2015) as training data set and date block 33 as the testing data set. we will compute the root mean squared error based on this testing data set.
   
- • Fitting the model
+ • Fitting the model:
   We go on to fit the model and compute the root mean squared error.
   
 • Display the important features in the model.
 
 • Drop unimportant features and refit the model computing the root mean squared error.
 
-• Making sale predictions for date block 34(November 2015) us- ing full data set.
+• Making sale predictions for date block 34(November 2015) using full data set.
