@@ -1,4 +1,4 @@
-# Predictive-Modelling-Competition
+# Retail Sales Prediction
 
 The goal of this project is to predict the number of unique objects sold in a shop over a period of 1 month using about 3 years’ worth of data. 
 Given that the list of shops and products slightly changes every month, we create a robust model capable of handling these situations.
